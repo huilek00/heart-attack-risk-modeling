@@ -1,0 +1,689 @@
+# Run this if you haven't installed the required packages yet
+install.packages("rpart.plot") 
+install.packages("rcompanion") 
+install.packages("rstatix") 
+install.packages("corrr") 
+install.packages("pROC") 
+install.packages("ggthemes") 
+
+# Load necessary libraries
+library(tidyverse)
+library(caret)  
+library(corrplot)
+library(glmnet)
+library(ggplot2)
+library(dplyr)
+
+# Change the directory according to your own directory
+setwd("C:/Users/User/heart_attack_risk_modeling")
+
+# Load the dataset 
+df <- read.csv("heart_disease_indicators_dataset.csv")
+
+########################################
+#         DATA PREPROCESSING           #
+########################################
+
+# Convert binary variables to numeric
+df <- df %>%
+  mutate(
+    PhysicalActivities = ifelse(PhysicalActivities == "Yes", 1, 0),
+    SmokerStatus = ifelse(SmokerStatus == "Never smoked", 0, 1),
+    AlcoholDrinkers = ifelse(AlcoholDrinkers == "Yes", 1, 0),
+    HadHeartAttack = ifelse(HadHeartAttack == "Yes", 1, 0),  # Target variable
+    HadAngina = ifelse(HadAngina == "Yes", 1, 0),
+    HadStroke = ifelse(HadStroke == "Yes", 1, 0),
+    HadAsthma = ifelse(HadAsthma == "Yes", 1, 0),
+    HadSkinCancer = ifelse(HadSkinCancer == "Yes", 1, 0),
+    HadCOPD = ifelse(HadCOPD == "Yes", 1, 0),
+    HadDepressiveDisorder = ifelse(HadDepressiveDisorder == "Yes", 1, 0),
+    HadKidneyDisease = ifelse(HadKidneyDisease == "Yes", 1, 0),
+    HadArthritis = ifelse(HadArthritis == "Yes", 1, 0),
+    HadDiabetes = ifelse(HadDiabetes == "Yes", 1, 0),
+    DeafOrHardOfHearing = ifelse(DeafOrHardOfHearing == "Yes", 1, 0),
+    BlindOrVisionDifficulty = ifelse(BlindOrVisionDifficulty == "Yes", 1, 0),
+    DifficultyConcentrating = ifelse(DifficultyConcentrating == "Yes", 1, 0),
+    DifficultyWalking = ifelse(DifficultyWalking == "Yes", 1, 0),
+    DifficultyDressingBathing = ifelse(DifficultyDressingBathing == "Yes", 1, 0),
+    DifficultyErrands = ifelse(DifficultyErrands == "Yes", 1, 0),
+    ChestScan = ifelse(ChestScan == "Yes", 1, 0),
+    FluVaxLast12 = ifelse(FluVaxLast12 == "Yes", 1, 0),
+    PneumoVaxEver = ifelse(PneumoVaxEver == "Yes", 1, 0),
+    CovidPos = ifelse(CovidPos == "Yes", 1, 0)
+  )
+
+# Convert categorical variables to factors
+df <- df %>%
+  mutate(
+    State = as.factor(State),
+    Sex = as.factor(Sex),
+    GeneralHealth = factor(GeneralHealth, levels = c("Poor", "Fair", "Good", "Very good", "Excellent"), ordered = TRUE),
+    LastCheckupTime = as.factor(LastCheckupTime),
+    ECigaretteUsage = as.factor(ECigaretteUsage),
+    RaceEthnicityCategory = as.factor(RaceEthnicityCategory),
+    AgeCategory = factor(AgeCategory, levels = c("Age 18 to 24", "Age 25 to 29", "Age 30 to 34", "Age 35 to 39", "Age 40 to 44", "Age 45 to 49", "Age 50 to 54", "Age 55 to 59", "Age 60 to 64", "Age 65 to 69", "Age 70 to 74", "Age 75 to 79", "Age 80 or older"), ordered = TRUE),
+    TetanusLast10Tdap = as.factor(TetanusLast10Tdap),
+    HighRiskLastYear = as.factor(HighRiskLastYear)
+  )
+
+# save the preprocessed data as a new csv file
+write.csv(df, "heart_disease_indicators_dataset_preprocessed.csv", row.names = FALSE)
+
+##########################################
+##               EDA                    ##
+##########################################
+
+# Load libraries
+library(ggthemes)  # For clean visualizations
+
+# 1. Target Variable (HadHeartAttack) Distribution ---------------------------
+heart_disease_prev <- df %>%
+  group_by(HadHeartAttack) %>%
+  summarise(Count = n()) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+ggplot(heart_disease_prev, aes(x = factor(HadHeartAttack), y = Percentage, 
+                               fill = factor(HadHeartAttack))) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), vjust = -0.5) +
+  labs(title = "Heart Disease Prevalence", 
+       x = "Heart Disease Diagnosis", y = "Percentage") +
+  theme_clean()
+
+# 2. Heart Attack Rate by Age and Smoking Status -----------------------------
+# (proportion of individuals within each age and smoking group who have experienced a heart attack)
+
+# Summarize data by AgeCategory and SmokerStatus
+plot_data <- df %>%
+  group_by(AgeCategory, SmokerStatus) %>%
+  summarise(HeartAttackRate = mean(HadHeartAttack), .groups = "drop")
+
+# Convert SmokerStatus to a factor for better labeling
+plot_data$SmokerStatus <- factor(plot_data$SmokerStatus, labels = c("Non-Smoker", "Smoker"))
+
+# Plot
+ggplot(plot_data, aes(x = AgeCategory, y = HeartAttackRate, fill = SmokerStatus)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Heart Attack Rate by Age and Smoking Status",
+       x = "Age Category",
+       y = "Heart Attack Rate",
+       fill = "Smoking Status") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 3. Heart Disease Risk by Age Group and Physical Activity Level -----------
+library(stringr)
+
+df %>%
+  group_by(PhysicalActivities, AgeCategory) %>%
+  summarise(Risk = mean(HadHeartAttack)) %>%
+  mutate(AgeCategory = case_when(
+    AgeCategory == "Age 80 or older" ~ "80++",
+    TRUE ~ str_replace(str_remove(AgeCategory, "Age "), " to ", "-")
+  )) %>%  # Format age labels
+  ggplot(aes(x = AgeCategory, y = Risk, color = factor(PhysicalActivities))) +
+  geom_point(size = 3) +
+  geom_line(aes(group = PhysicalActivities)) +
+  scale_color_brewer(palette = "Set1", labels = c("Inactive", "Active")) +
+  labs(title = "Heart Disease Risk by Age Group and Physical Activity Level")
+
+# 4. Clinical Correlations -----------------------------------
+clinical_vars <- df %>%
+  select(HadHeartAttack, BMI, GeneralHealth)
+
+# BMI Distribution by Heart Disease Status
+ggplot(clinical_vars, aes(x = BMI, fill = factor(HadHeartAttack))) +
+  geom_density(alpha = 0.6) +
+  labs(title = "BMI Distribution by Heart Disease Status")
+
+
+##########################################
+##          Feature Selection           ##
+##########################################
+
+# Obtain correlation coefficients for selected variables 
+library(vcd)  # For Cramér's V
+
+# Define the target variable
+target_var <- "HadHeartAttack"
+
+# Select features for analysis (excluding the target variable)
+features <- df %>%
+  select(
+    # Health Behaviors
+    PhysicalActivities, 
+    SmokerStatus, 
+    AlcoholDrinkers, 
+    SleepHours,
+    
+    # Demographics
+    Sex, 
+    AgeCategory, 
+    RaceEthnicityCategory,
+    
+    # Health Indicators
+    GeneralHealth,
+    PhysicalHealthDays,
+    BMI,
+    
+    # Additional Health Conditions
+    HadArthritis,
+    HadDiabetes,
+    
+    # Target Variable
+    all_of(target_var)
+  )
+
+# Identify numeric and categorical variables
+numeric_vars <- names(select(features, where(is.numeric)))
+categorical_vars <- names(select(features, where(is.factor)))
+
+# Convert categorical variables to factors if not already
+features <- features %>% mutate(across(all_of(categorical_vars), as.factor))
+
+# Compute Pearson correlation for numeric variables with HadHeartAttack
+cor_numeric <- cor(features[c(numeric_vars, target_var)], use = "complete.obs", method = "pearson")[, target_var]
+
+# Function to compute Cramér's V
+cramers_v <- function(x, y) {
+  tbl <- table(x, y)
+  vcd::assocstats(tbl)$cramer
+}
+
+# Compute Cramér's V for categorical variables with HadHeartAttack
+cor_categorical <- sapply(categorical_vars, function(var) cramers_v(features[[var]], features[[target_var]]))
+
+# Combine numeric and categorical correlations
+cor_results <- c(cor_numeric, cor_categorical)
+
+# Convert to a data frame for easy viewing
+cor_df <- data.frame(Variable = names(cor_results), Correlation = cor_results)
+
+# Sort by absolute correlation values
+cor_df <- cor_df[order(abs(cor_df$Correlation), decreasing = TRUE), ]
+
+# Print correlation values in console
+print(cor_df)
+
+# Feature selection using Lasso Regression --------------------------------
+feature_selection <- function(df) {
+  # Define target variables
+  target_vars <- c("HadHeartAttack")
+  
+  # Select features for analysis
+  features <- df %>%
+    select(
+      # Health Behaviors
+      PhysicalActivities, 
+      SmokerStatus, 
+      AlcoholDrinkers, 
+      SleepHours,
+      
+      # Demographics
+      Sex, 
+      AgeCategory, 
+      RaceEthnicityCategory,
+      
+      # Health Indicators
+      GeneralHealth,
+      PhysicalHealthDays,
+      BMI,
+      
+      # Additional Health Conditions
+      HadArthritis,
+      HadDiabetes,
+      
+      # Target Variables
+      all_of(target_vars)
+    )
+  
+  # Prepare data for analysis
+  feature_matrix <- features %>%
+    mutate(across(where(is.factor), as.numeric)) %>%
+    as.matrix()
+  
+  # Correlation Analysis
+  correlation_matrix <- cor(feature_matrix, use = "complete.obs")
+  
+  # Visualize Correlation
+  pdf("correlation_plot.pdf", width = 12, height = 10)
+  corrplot(correlation_matrix, 
+           method = "color", 
+           type = "full", 
+           addCoef.col = "black", 
+           number.cex = 0.7,
+           tl.cex = 0.7)
+  dev.off()
+  
+  # Lasso Regression for Feature Importance
+  lasso_results <- list()
+  
+  for (target in target_vars) {
+    # Prepare target variable
+    y <- features %>% pull(all_of(target))
+    
+    # Remove target variable from predictors
+    X <- feature_matrix[, !colnames(feature_matrix) %in% target_vars]
+    
+    # Fit Lasso model
+    lasso_model <- cv.glmnet(X, y, family = "binomial", alpha = 1)
+    
+    # Get feature coefficients
+    lasso_coef <- coef(lasso_model, s = "lambda.min")
+    
+    # Extract important features
+    important_features <- rownames(lasso_coef)[which(abs(lasso_coef) > 0)]
+    
+    lasso_results[[target]] <- list(
+      important_features = important_features,
+      coefficients = lasso_coef
+    )
+  }
+  
+  # Create summary
+  summary_results <- list(
+    correlation_matrix = correlation_matrix,
+    lasso_results = lasso_results
+  )
+  
+  return(summary_results)
+}
+
+# Run feature selection
+results <- feature_selection(df)
+
+# Print results
+print("Lasso Important Features:")
+for (target in names(results$lasso_results)) {
+  cat(paste0("\n", target, ":\n"))
+  print(results$lasso_results[[target]]$important_features)
+}
+
+# All features has been selected as important features by using Lasso Regression
+
+###########################################
+###         PREDICTIVE MODELING         ###
+###########################################
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data
+train_index <- createDataPartition(df$HadHeartAttack, p = 0.8, list = FALSE)
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+
+# Baseline logistic regression model --------------------------------------
+
+# Build a baseline logistic regression model (without applying class weights) 
+baseline_logistic_model <- glm(HadHeartAttack ~ ., data = train_data, family = binomial(link = "logit"))
+
+# Summarize the model
+summary(baseline_logistic_model)
+
+# Predict probabilities
+predicted_probabilities <- predict(baseline_logistic_model, test_data, type = "response")
+
+# Convert probabilities to binary predictions (0 or 1)
+predicted_classes <- ifelse(predicted_probabilities > 0.5, 1, 0)
+
+# Ensure predicted_classes and test_data$HadHeartAttack are factors with the same levels
+predicted_classes <- factor(predicted_classes, levels = c(0, 1))
+test_data$HadHeartAttack <- factor(test_data$HadHeartAttack, levels = c(0, 1))
+
+# Create confusion matrix
+confusion_matrix <- confusionMatrix(predicted_classes, test_data$HadHeartAttack, positive = "1")
+
+# Extract metrics
+accuracy <- confusion_matrix$overall["Accuracy"]
+precision <- confusion_matrix$byClass["Pos Pred Value"]
+recall <- confusion_matrix$byClass["Sensitivity"]
+f1_score <- confusion_matrix$byClass["F1"]
+
+# Print the metrics
+print(paste("Accuracy:", accuracy))
+print(paste("Precision:", precision))
+print(paste("Recall:", recall))
+print(paste("F1 Score:", f1_score))
+
+# Weighted logistic regression model --------------------------------------
+
+# Compute class weights
+class_counts <- table(train_data$HadHeartAttack)
+total_samples <- sum(class_counts)
+class_weights <- total_samples / (length(class_counts) * class_counts)
+
+# Assign weights to each sample in the training set
+train_weights <- ifelse(train_data$HadHeartAttack == 1, class_weights["1"], class_weights["0"])
+
+# Build the weighted logistic regression model 
+logistic_model <- glm(formula = HadHeartAttack ~ ., 
+                      data = train_data, 
+                      family = binomial(link = "logit"), 
+                      weights = train_weights)
+
+# Remove weights from the terms before predicting
+logistic_model$terms <- delete.response(terms(HadHeartAttack ~ ., data = train_data))
+
+# Try predicting
+predicted_probabilities <- predict(logistic_model, newdata = test_data, type = "response")
+
+# Convert probabilities to binary predictions (0 or 1)
+predicted_classes <- ifelse(predicted_probabilities > 0.5, 1, 0)
+
+# Ensure predicted_classes and test_data$HadHeartAttack are factors with the same levels
+predicted_classes <- factor(predicted_classes, levels = c(0, 1))
+test_data$HadHeartAttack <- factor(test_data$HadHeartAttack, levels = c(0, 1))
+
+# Create confusion matrix
+confusion_matrix <- confusionMatrix(predicted_classes, test_data$HadHeartAttack, positive = "1")
+
+# Extract performance metrics
+accuracy <- confusion_matrix$overall["Accuracy"]
+precision <- confusion_matrix$byClass["Pos Pred Value"]
+recall <- confusion_matrix$byClass["Sensitivity"]
+f1_score <- confusion_matrix$byClass["F1"]
+
+# Print the metrics
+print(paste("Accuracy:", accuracy))
+print(paste("Precision:", precision))
+print(paste("Recall:", recall))
+print(paste("F1 Score:", f1_score))
+
+# Plot ROC (Receiver-operating characteristic) curve -----------------------
+# Load necessary package
+library(pROC)
+
+# Try predicting probabilities
+predicted_probabilities <- predict(logistic_model, newdata = test_data, type = "response")
+
+# Create the ROC curve
+roc_curve <- roc(test_data$HadHeartAttack, predicted_probabilities)
+
+# Plot ROC curve
+plot(roc_curve, main = "ROC Curve", col = "blue", lwd = 2)
+
+# Calculate AUC (Area Under the Curve)
+auc_value <- auc(roc_curve)
+
+# Add AUC value to the plot
+text(x = 0.5, y = 0.2, labels = paste("AUC = ", round(auc_value, 2)), col = "red", cex = 1.5)
+
+
+##################################################################
+#                  POLICY SIMULATION & EVALUATION                #
+##################################################################
+
+# Simulate and Evaluate Policy Intervention Scenarios Using Trained Weighted Logistic Model
+
+# Convert test_data$HadHeartAttack to a factor with levels 0 and 1
+test_data$HadHeartAttack <- factor(test_data$HadHeartAttack, levels = c(0, 1))
+
+# Baseline predictions (no policy change)
+baseline_probabilities <- predict(logistic_model, test_data, type = "response")
+baseline_classes <- ifelse(baseline_probabilities > 0.5, 1, 0)
+baseline_classes <- factor(baseline_classes, levels = c(0, 1))  # Ensure factor type
+
+# Function to evaluate policy impact
+evaluate_policy_impact <- function(test_data, policy_name, policy_function) {
+  # Apply the policy to the test data
+  test_data_modified <- policy_function(test_data)
+  
+  # Predict probabilities under the policy
+  policy_probabilities <- predict(logistic_model, test_data_modified, type = "response")
+  policy_classes <- ifelse(policy_probabilities > 0.5, 1, 0)
+  
+  # Ensure policy_classes is a factor with the same levels as test_data$HadHeartAttack
+  policy_classes <- factor(policy_classes, levels = c(0, 1))
+  
+  # Create confusion matrix
+  confusion_matrix <- confusionMatrix(policy_classes, test_data$HadHeartAttack, positive = "1")
+  
+  # Extract performance metrics
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+  
+  # Calculate the reduction in heart disease probability
+  reduction_in_probability <- mean(baseline_probabilities - policy_probabilities)
+  
+  # Print the results
+  cat("Policy:", policy_name, "\n")
+  cat("Reduction in Heart Disease Probability:", reduction_in_probability, "\n")
+  cat("Accuracy:", accuracy, "\n")
+  cat("Precision:", precision, "\n")
+  cat("Recall:", recall, "\n")
+  cat("F1 Score:", f1_score, "\n")
+  cat("\n")
+}
+
+# Define policy functions
+
+# Policy 1: Universal Physical Activity Adoption
+increase_physical_activity <- function(data) {
+  data %>% mutate(PhysicalActivities = 1)
+}
+
+# Policy 2: Complete Smoking Cessation
+reduce_smoking <- function(data) {
+  data %>% mutate(SmokerStatus = 0)
+}
+
+# Policy 3: A Combined Approach
+combined_intervention <- function(data) {
+  data %>% mutate(PhysicalActivities = 1, SmokerStatus = 0)
+}
+
+# Evaluate each policy
+evaluate_policy_impact(test_data, "Increase Physical Activity", increase_physical_activity)
+evaluate_policy_impact(test_data, "Reduce Smoking", reduce_smoking)
+evaluate_policy_impact(test_data, "Combined Intervention", combined_intervention)
+
+###############################################################
+# Policy Risk Reduction Summary
+summarize_policy_impact <- function(test_data, policy_name, policy_function, model) {
+  modified_data <- policy_function(test_data)
+  
+  baseline_probs <- predict(model, test_data, type = "response")
+  policy_probs <- predict(model, modified_data, type = "response")
+  
+  risk_reduction <- mean(baseline_probs - policy_probs)
+  cases_prevented <- risk_reduction * nrow(test_data)
+  relative_reduction <- risk_reduction / mean(baseline_probs) * 100
+  
+  return(list(
+    policy = policy_name,
+    absolute_risk_reduction = risk_reduction,
+    relative_risk_reduction = relative_reduction,
+    cases_prevented = cases_prevented,
+    population_size = nrow(test_data),
+    baseline_risk = mean(baseline_probs)
+  ))
+}
+
+# Define policy functions
+increase_physical_activity <- function(data) {
+  data %>% mutate(PhysicalActivities = 1)
+}
+
+reduce_smoking <- function(data) {
+  data %>% mutate(SmokerStatus = 0)
+}
+
+combined_intervention <- function(data) {
+  data %>% mutate(PhysicalActivities = 1, SmokerStatus = 0)
+}
+
+# Run analysis
+policy_results <- list(
+  summarize_policy_impact(test_data, "Physical Activity", increase_physical_activity, logistic_model),
+  summarize_policy_impact(test_data, "Smoking Reduction", reduce_smoking, logistic_model),
+  summarize_policy_impact(test_data, "Combined Intervention", combined_intervention, logistic_model)
+)
+
+# 4. Convert to data frame for better viewing
+results_df <- do.call(rbind, lapply(policy_results, as.data.frame))
+print(results_df)
+
+#######################################################################
+# Evaluate by age groups
+age_groups <- split(test_data, test_data$AgeCategory)
+lapply(age_groups, function(df) {
+  summarize_policy_impact(df, "Combined Intervention", combined_intervention, logistic_model)
+})
+
+# Evaluate policy impact under varying compliance rates (10% to 100%)
+compliance_rates <- seq(0.1, 1, by = 0.1)
+sapply(compliance_rates, function(r) {
+  partial_intervention <- function(data) {
+    data %>% mutate(
+      PhysicalActivities = ifelse(runif(nrow(data)) < r, 1, PhysicalActivities),
+      SmokerStatus = ifelse(SmokerStatus == 1 & runif(nrow(data)) < r, 0, SmokerStatus)
+    )
+  }
+  summarize_policy_impact(test_data, paste0(r*100, "% Compliance"), partial_intervention, logistic_model)$absolute_risk_reduction
+})
+
+# Convert the age-grouped results to a dataframe
+age_results <- data.frame(
+  AgeGroup = c("18-24", "25-29", "30-34", "35-39", "40-44", "45-49", 
+               "50-54", "55-59", "60-64", "65-69", "70-74", "75-79", "80+"),
+  CasesPrevented = c(7.54, 9.81, 24.48, 38.75, 54.42, 61.10, 
+                     81.74, 98.85, 128.95, 146.86, 137.02, 97.75, 93.93),
+  PopulationSize = c(2690, 2198, 2658, 3098, 3445, 3391,
+                     3909, 4510, 5234, 5854, 5131, 3556, 3530),
+  RelativeReduction = c(5.42, 8.50, 10.84, 11.36, 11.12, 9.20,
+                        8.37, 7.41, 7.29, 6.48, 5.88, 5.46, 4.57)
+) %>%
+  mutate(
+    CasesPreventedPer1000 = (CasesPrevented/PopulationSize)*1000,
+    AgeGroup = factor(AgeGroup, levels = AgeGroup) # Preserve order
+  )
+
+# Plot 1: Impact of Combined Intervention Across Age Groups -------------------
+library(scales)
+
+ggplot(age_results, aes(x = AgeGroup)) +
+  # Relative Reduction (Primary axis - left)
+  geom_col(aes(y = RelativeReduction, fill = "Relative Risk Reduction (%)"), 
+           width = 0.4, position = position_nudge(x = -0.2), alpha = 0.8) +
+  
+  # Cases Prevented per 1000 (Secondary axis - right)
+  geom_col(aes(y = CasesPreventedPer1000/3, fill = "Cases Prevented per 1000"), 
+           width = 0.4, position = position_nudge(x = 0.2), alpha = 0.8) +
+  
+  # Axis scaling
+  scale_y_continuous(
+    name = "Relative Risk Reduction (%)",
+    sec.axis = sec_axis(~.*3, name = "Cases Prevented per 1000 Population")
+  ) +
+  
+  # Customization
+  scale_fill_manual(values = c("#1b9e77", "#7570b3")) +
+  labs(
+    title = "Impact of Combined Intervention Across Age Groups",
+    subtitle = "Comparing the benefits in proportion to risk reduction and population impact",
+    x = "Age Group",
+    fill = "Metric"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    plot.subtitle = element_text(color = "gray40")
+  ) +
+  
+  # Highlight peak effectiveness
+  geom_text(
+    data = subset(age_results, RelativeReduction == max(RelativeReduction)),
+    aes(y = RelativeReduction, label = "Peak Proportional Benefit"),
+    vjust = -0.6, color = "#1b9e77", fontface = "bold"  # Adjust vertical position to avoid overlap
+  ) +
+  
+  geom_text(
+    data = subset(age_results, CasesPreventedPer1000 == max(CasesPreventedPer1000)),
+    aes(y = CasesPreventedPer1000/3, label = "Peak Population Impact"),
+    vjust = -0.6, color = "#7570b3", fontface = "bold"  # Adjust vertical position to avoid overlap
+  ) +
+  
+  # Add value labels inside the bars (on top)
+  geom_text(
+    aes(y = RelativeReduction, label = scales::comma(RelativeReduction, accuracy = 0.01)),
+    position = position_nudge(x = -0.2), 
+    vjust = 1.3, color = "white", fontface = "bold"  # Adjust vertical position inside bar
+  ) +
+  
+  geom_text(
+    aes(y = CasesPreventedPer1000/3, label = scales::comma(CasesPreventedPer1000, accuracy = 1)),
+    position = position_nudge(x = 0.2), 
+    vjust = 1.3, color = "white", fontface = "bold"  # Adjust vertical position inside bar
+  )
+
+# Plot 2: Impact of Smoking Cessation Across Age Groups ----------------------
+
+ggplot(age_results, aes(x = AgeGroup)) +
+  # Relative Risk Reduction (Primary axis - left)
+  geom_col(
+    aes(y = RelativeReduction, fill = "Relative Risk Reduction (%)"),
+    width = 0.4, position = position_nudge(x = -0.2), alpha = 0.8
+  ) +
+  
+  # Cases Prevented per 1000 (Secondary axis - right, scaled down)
+  geom_col(
+    aes(y = CasesPreventedPer1000 / 3, fill = "Cases Prevented per 1000"),
+    width = 0.4, position = position_nudge(x = 0.2), alpha = 0.8
+  ) +
+  
+  # Axis scaling
+  scale_y_continuous(
+    name = "Relative Risk Reduction (%)",
+    sec.axis = sec_axis(~ . * 3, name = "Cases Prevented per 1,000 Population")
+  ) +
+  
+  # Custom colors for the bars
+  scale_fill_manual(
+    values = c("Relative Risk Reduction (%)" = "#1b9e77", "Cases Prevented per 1000" = "#7570b3")
+  ) +
+  
+  # Labels and theme
+  labs(
+    title = "Smoking Cessation Impact by Age Group",
+    subtitle = "Middle-aged groups show highest absolute impact despite greater relative reduction in younger adults",
+    x = "Age Group",
+    fill = "Metric",
+    caption = "Data from policy simulation analysis"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold"),
+    legend.position = "top",
+    panel.grid.major.x = element_blank(),
+    plot.subtitle = element_text(color = "gray40")
+  ) +
+  
+  # Highlight peak effectiveness
+  geom_text(
+    data = subset(age_results, RelativeReduction == max(RelativeReduction)),
+    aes(y = RelativeReduction, label = "Peak Proportional Benefit"),
+    vjust = -0.6, color = "#1b9e77", fontface = "bold"  # Adjust vertical position to avoid overlap
+  ) +
+  geom_text(
+    data = subset(age_results, CasesPreventedPer1000 == max(CasesPreventedPer1000)),
+    aes(y = CasesPreventedPer1000 / 3, label = "Peak Population Impact"),
+    vjust = -0.6, color = "#7570b3", fontface = "bold"  # Adjust vertical position to avoid overlap
+  ) +
+  
+  # Add value labels inside the bars (on top)
+  geom_text(
+    aes(y = RelativeReduction, label = scales::comma(RelativeReduction, accuracy = 0.01)),
+    position = position_nudge(x = -0.2), 
+    vjust = 1.3, color = "white", fontface = "bold"  # Adjust vertical position inside bar
+  ) +
+  
+  geom_text(
+    aes(y = CasesPreventedPer1000 / 3, label = scales::comma(CasesPreventedPer1000, accuracy = 1)),
+    position = position_nudge(x = 0.2), 
+    vjust = 1.3, color = "white", fontface = "bold"  # Adjust vertical position inside bar
+  )

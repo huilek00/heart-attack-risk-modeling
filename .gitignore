@@ -1,0 +1,7 @@
+# R files
+.RData
+.Rhistory
+.Rproj.user/
+
+# Large data files
+*.csv

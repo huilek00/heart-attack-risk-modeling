@@ -18,7 +18,7 @@ The documentation provides an in-depth overview of the methodology, including **
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/huilek00/Heart_Disease_Risk_Prediction
+    git clone https://github.com/huilek00/heart-attack-risk-modeling.git
     ```
 
 2. Install necessary R packages:

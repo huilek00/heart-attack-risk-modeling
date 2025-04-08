@@ -11,7 +11,7 @@ The documentation provides an in-depth overview of the methodology, including **
   - Universal **physical activity adoption**
   - **Complete smoking cessation**
   - A **combined approach** of both interventions
-- Quantified potential reductions in heart attack probability across **age groups**: **Middle-Aged Adults (45-59)**
+- Quantified potential reductions in heart attack probability across **age groups**
 - **Data-driven policy recommendations** based on predictive modeling insights
 
 ## How to Run
@@ -21,15 +21,10 @@ The documentation provides an in-depth overview of the methodology, including **
     git clone https://github.com/huilek00/heart-attack-risk-modeling.git
     ```
 
-2. Install necessary R packages:
-    ```r
-    install.packages(c("ggplot2", "dplyr", "caret", "ROSE"))
-    ```
-
-3. Download the dataset from here:  
+2. Download the dataset (heart_2022_no_nans.csv) from here:  
    [https://www.kaggle.com/datasets/kamilpytlak/personal-key-indicators-of-heart-disease/data](https://www.kaggle.com/datasets/kamilpytlak/personal-key-indicators-of-heart-disease/data)
 
-4. Run the R scripts for analysis.
+3. Run the R scripts for analysis.
 
 ## Documentation
-For detailed documentation on the project, please refer to this [Hashnode article](#).
+For detailed documentation on the project, please refer to this [Hashnode article](https://huilek.hashnode.dev/predictive-modeling-of-heart-attack-risk-factors-and-policy-impact-simulation).
